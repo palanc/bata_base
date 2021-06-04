@@ -7,7 +7,7 @@ from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
 from getch import _Getch
  
 MOTOR_COUNT = 1
-JOINT_COUNTS = [1]
+JOINT_COUNTS = [10]
 POSITION_DEL = math.pi/10
 VELOCITY_DEL = math.pi/30
 CURRENT_DEL = 3
@@ -109,6 +109,34 @@ if __name__ == '__main__':
       traj_msg.points[0].effort[idx] = 0
       traj_pub.publish(traj_msg)
       print 'Turned off brake %d of motor %d'%(brake_idx, motor_idx)
+
+    elif cmd == 'O':
+      print 'About to turn on all of motor %d brakes'%(motor_idx)
+      raw_input('Press enter to continue')
+
+      idx = 0
+      for i in range(motor_idx):
+        idx += JOINT_COUNTS[i] + 1
+      idx += 1
+
+      for i in range(JOINT_COUNTS[motor_idx]):
+        traj_msg.points[0].effort[idx+i] = 1
+        traj_pub.publish(traj_msg)
+        rospy.sleep(0.01)
+
+    elif cmd == 'A':
+      print 'About to turn off all of motor %d brakes'%(motor_idx)
+      raw_input('Press enter to continue')
+
+      idx = 0
+      for i in range(motor_idx):
+        idx += JOINT_COUNTS[i] + 1
+      idx += 1
+
+      for i in range(JOINT_COUNTS[motor_idx]):
+        traj_msg.points[0].effort[idx+i] = 0
+        traj_pub.publish(traj_msg)
+        rospy.sleep(0.01)
 
     elif cmd == 'w':
 
