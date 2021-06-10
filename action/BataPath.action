@@ -1,0 +1,8 @@
+# goal definition
+trajectory_msgs/JointTrajectory path
+---
+# result definition
+bool[] waypoint_success
+---
+# feedback
+bool[] waypoint_success
