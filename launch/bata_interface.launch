@@ -2,7 +2,7 @@
 <launch>
 
   <arg name="motor_count" default="1" />
-  <arg name="joint_counts" default="[3]" />
+  <arg name="joint_counts" default="[10]" />
 
   <param name="motor_count" value="$(arg motor_count)" />
   <rosparam param="joint_counts"  subst_value="True">$(arg joint_counts)</rosparam>

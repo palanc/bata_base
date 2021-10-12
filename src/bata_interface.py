@@ -15,8 +15,9 @@ SENSOR_CMD = 2
 MODE_CMD = 3
 
 cur_cmd = None
-motor_modes = None
-joint_counts = None
+motor_count = 0
+motor_modes = []
+joint_counts = []
 
 def pos_val_to_rad(val):
   return (val-((4096-0)/2.0))*(2*math.pi/4096)
@@ -41,7 +42,7 @@ def cmd_cb(msg):
 
   if len(msg.chain_cmds) != len(motor_modes):
     print('Msg does not have the correct amount of chain cmds (expected %d, received %d)'
-          %(len(msg.chain_cmds),len(motor_modes)))
+          %(len(motor_modes), len(msg.chain_cmds)))
     return  
 
   for i in range(len(motor_modes)):
@@ -52,12 +53,8 @@ def cmd_cb(msg):
 
   cur_cmd = msg
 
-def main():
-  global cur_cmd, motor_modes, joint_counts
-
-  rospy.init_node('bata_interface')
-  ser = serial.Serial(port='/dev/ttyACM0', 
-                      baudrate=SERIAL_BAUD)
+def init_motor_board(ser):
+  global motor_count, motor_modes, joint_counts
 
   # Turn off sensor data
   ser.write(struct.pack("B", SENSOR_CMD))
@@ -67,6 +64,10 @@ def main():
 
   # Get motor/joint info
   ser.write(struct.pack("B", INFO_CMD))
+
+  motor_count = 0
+  motor_modes = []
+  joint_counts = []
 
   while ser.in_waiting < 1:
     pass
@@ -79,6 +80,21 @@ def main():
     motor_modes.append(struct.unpack("B", ser.read())[0])
     joint_counts.append(struct.unpack("B", ser.read())[0])
   
+  # Turn on sensor data
+  ser.write(struct.pack("B", SENSOR_CMD))
+  ser.write(struct.pack("B", 1))
+
+
+def main():
+  global cur_cmd, motor_modes
+
+  rospy.init_node('bata_interface')
+  ser = serial.Serial(port='/dev/ttyACM0', 
+                      baudrate=SERIAL_BAUD)
+
+
+  init_motor_board(ser)
+
   print('Motor count: %d'%motor_count)
   print('Motor modes: ' + str(motor_modes))
   print('Joint counts: '+str(joint_counts))
@@ -108,27 +124,33 @@ def main():
     sensor_update_bytes += 6+3*joint_counts[i]
     cmd_update_bytes += (joint_counts[i]+7)//8
 
-  # Turn on sensor data
-  ser.write(struct.pack("B", SENSOR_CMD))
-  ser.write(struct.pack("B", 1))
-  
+  joint_home_vals = []  
   sensor_msg = JointState()
   for i in range(motor_count):
     sensor_msg.name.append('m'+str(i))
     sensor_msg.position.append(0)
     sensor_msg.velocity.append(0)
     sensor_msg.effort.append(0)
+    joint_home_vals.append([])
     for j in range(joint_counts[i]):
       sensor_msg.name.append('m'+str(i)+'_j'+str(j))
       sensor_msg.position.append(0)
       sensor_msg.velocity.append(0)
       sensor_msg.effort.append(0)
 
+      home_val_name = sensor_msg.name[-1]+"_home_val"
+      if not rospy.has_param(home_val_name):
+        joint_home_vals[i].append(0.0)
+        print 'Did not find param '+home_val_name+', setting to 0.0'
+      else:
+        joint_home_vals[i].append(rospy.get_param(home_val_name))
+
   sensor_pub = rospy.Publisher('joint_states', JointState, queue_size=1)
   traj_sub = rospy.Subscriber("cmd_trajectory", BataCmd, cmd_cb)
 
   start_stamp = None
   prev_hw_stamp = None
+  sensor_msg.header.stamp = rospy.Time.now()
   while not rospy.is_shutdown():
 
     if cur_cmd is not None:
@@ -169,18 +191,20 @@ def main():
 
       ser.write(struct.pack('B', UPDATE_CMD))
       ser.write(struct.pack('B'*len(cmd_update), *cmd_update))
-        
+      print('Sent '+str(cmd_update))
       cur_cmd = None
 
     if ser.in_waiting >= sensor_update_bytes:
       # Get time stamp
       time_stamp = struct.unpack(">L", ser.read(4))[0]
-      time_stamp = rospy.Duration.from_sec(time_stamp/1000000.0)
-      if (prev_hw_stamp is None) or (prev_hw_stamp > time_stamp)
-        start_stamp = rospy.Time.now() - 2*time_stamp
-
-      sensor_msg.header.stamp = start_stamp + time_stamp
-      prev_hw_stamp = time_stamp
+      #time_stamp = rospy.Duration.from_sec(time_stamp/1000000.0)
+      #if (prev_hw_stamp is None) or (prev_hw_stamp > time_stamp):
+      #  start_stamp = rospy.Time.now() - 2*time_stamp
+      #
+      #sensor_msg.header.stamp = start_stamp + time_stamp
+      #prev_hw_stamp = time_stamp
+      sensor_msg.header.stamp = rospy.Time.now()
+      status_bad = False
 
       cur_idx = 0
       for i in range(motor_count):
@@ -190,9 +214,31 @@ def main():
         cur_idx += 1
         for j in range(joint_counts[i]):
           sensor_msg.position[cur_idx] = (2*math.pi/((1<<16)))*struct.unpack(">h", ser.read(2))[0]
+          sensor_msg.position[cur_idx] -= joint_home_vals[i][j]
+          if sensor_msg.position[cur_idx] > math.pi:
+            sensor_msg.position[cur_idx] -= 2*math.pi
+          elif sensor_msg.position[cur_idx] < -math.pi:
+            sensor_msg.position[cur_idx] += 2*math.pi
+
           sensor_msg.effort[cur_idx] = struct.unpack("B", ser.read(1))[0]
+          if sensor_msg.effort[cur_idx] != 0x04:
+            status_bad = True
+
           cur_idx += 1
-      sensor_pub.publish(sensor_msg)
+      
+      if status_bad:
+        print('Status bad: '+str(sensor_msg))
+      else:
+        sensor_pub.publish(sensor_msg)
+    elif(rospy.Time.now() - sensor_msg.header.stamp > rospy.Duration.from_sec(0.1)):
+      print 'Reseting connection to motor board'
+      ser.close()
+      rospy.sleep(0.1)
+      ser = serial.Serial(port='/dev/ttyACM0', 
+                          baudrate=SERIAL_BAUD)
+      init_motor_board(ser)
+      print 'Reset complete'
+      sensor_msg.header.stamp = rospy.Time.now()
 
   ser.close()
   

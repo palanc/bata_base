@@ -12,7 +12,7 @@ import sys
 
 JOINT_DELTA = 5*(math.pi/180.0)
 VELOCITY_CMD = 0.2
-JOINT_LIMIT = 55.0*(math.pi/180.0)
+JOINT_LIMIT = 62.0*(math.pi/180.0)
 
 class BataPathController:
 
@@ -24,16 +24,6 @@ class BataPathController:
     self.device_count_ = 0
     for i in range(self.motor_count_):
       self.device_count_ += 1+self.joint_counts_[i]
-
-    # Wait until the cmd trajectory topic is available
-    topic_ready = False
-    while not topic_ready:
-      topics = rospy.get_published_topics()
-      for topic in topics:
-        if topic == "cmd_trajectory":
-          topic_ready = True
-          break      
-      rospy.sleep(0.1)
 
     self.cmd_pub_ = rospy.Publisher("cmd_trajectory", BataCmd, queue_size=1)
 
@@ -48,21 +38,23 @@ class BataPathController:
                                             BataPathAction,
                                             execute_cb = self.execute_cb,
                                             auto_start = False)
+    print 'Starting server'
     self.as_.start()
+    print 'Server started'
 
   def robot_state_cb(self, msg):
     # Only update if the current message isn't being examined right now
-    if(self.robot_state_lock_.acquire(blocking=False)):
+    if(self.robot_state_lock_.acquire(False)):
       # Check that message is valid
       state_idx = 0
-      bool msg_ok = True
+      msg_ok = True
       if len(msg.name) != self.device_count_:
         print('Expected %d joints, recieved %d'%(self.device_count_, len(msg.name)))
         msg_ok = False
       else:
         for i in range(self.motor_count_):
           if(msg.name[state_idx] != 'm'+str(i)):
-            print('Expected joint %d to have name m%d'%(state_idx,i)
+            print('Expected joint %d to have name m%d'%(state_idx,i))
             msg_ok = False
             break
           state_idx += 1
@@ -82,10 +74,9 @@ class BataPathController:
     cmd_msg = BataCmd()
     for i in range(self.motor_count_):
       chain_cmd_msg = BataChainCmd()
-      chain_cmd_msg.motor_mode = 1
-      chain_cmd_msg.motor_cmd = 0.0 # Velocity mode
-      for j in range(self.joint_counts_[i]):
-        chain_cmd_msg.enable_brake[j] = False
+      chain_cmd_msg.motor_mode = 1 # Velocity mode
+      chain_cmd_msg.motor_cmd = 0.0
+      chain_cmd_msg.enable_brake = [False]*joint_counts[i]
       cmd_msg.chain_cmds.append(chain_cmd_msg)
 
     # Setup action responses
@@ -112,7 +103,7 @@ class BataPathController:
       if self.as_.is_preempt_requested():
         print('Pre-empted, abort')
         self.as_.set_preempted()
-        break
+        goal_idx = len(goal.path.points) # Indicates done
 
       # Get latest robot state
       while self.cur_robot_state_msg_ is None:
@@ -139,6 +130,9 @@ class BataPathController:
                and robot_state[i][j] < robot_setpoints[i][j]))):
             robot_setpoints[i][j] = None
             cmd_msg.chain_cmds[i].enable_brake[j] = True
+      print 'Goal idx: ' + str(goal_idx)
+      print 'Goals: '+str(robot_setpoints)
+      print 'State: '+str(robot_state)
 
       while True:
         # Check if ready for next goal
@@ -166,7 +160,7 @@ class BataPathController:
           if goal_idx >= len(goal.path.points):
             as_result.waypoint_success = as_feedback.waypoint_success
             self.as_.set_succeeded(as_result)
-            return
+            break
           else:
             # Check if next goal is valid
             for i in range(len(goal.path.points[goal_idx].positions)):
@@ -174,7 +168,11 @@ class BataPathController:
                 print('Out of bounds goal: %f'%(goal.path.points[goal_idx].positions[i]))
                 as_result.waypoint_success = as_feedback.waypoint_success
                 self.as_.set_succeeded(as_result)
-                return  
+                goal_idx = len(goal.path.points) # Indicates done
+                break
+
+            if(goal_idx >= len(goal.path.points)):
+              break
 
             goal_match = 0
             for i in range(self.motor_count_):
@@ -194,7 +192,8 @@ class BataPathController:
               print('Not all goal joint names matched with existing joints, abort')
               as_result.waypoint_success = as_feedback.waypoint_success
               self.as_.set_succeeded(as_result)
-              return
+              goal_idx = len(goal.path.points) # Indicates done
+              break
         else:
           # Found an unfinished goal
           break            
@@ -222,10 +221,10 @@ class BataPathController:
             cmd_msg.chain_cmds[i].motor_cmd = -VELOCITY_CMD
           # Brake any joints that lost the vote
           for j in range(self.joint_counts_[i]):
-            pos_error = robot_setpoints[i][j]-robot_state[i][j]
-            if(robot_setpoints[i][j] is not None and 
-               cmd_msg.chain_cmds[i].motor_cmd*pos_error < 0.0):
-              cmd_msg.chain_cmds[i].enable_brake[j] = True
+            if(robot_setpoints[i][j] is not None):
+              pos_error = robot_setpoints[i][j]-robot_state[i][j]
+              if(cmd_msg.chain_cmds[i].motor_cmd*pos_error < 0.0):
+                cmd_msg.chain_cmds[i].enable_brake[j] = True
         elif(pos_votes[i] == 0 and neg_votes[i] == 0):
           # No votes because all joints have either reached goal or are braked
           # Time to switch motor direction
@@ -238,8 +237,17 @@ class BataPathController:
           # Continue going in the current direction (change nothing)
           pass
             
-      # Send the updated command
-      self.cmd_pub_.publish(cmd_msg)      
+      if goal_idx >= 0 and goal_idx < len(goal.path.points):
+        # Send the updated command
+        self.cmd_pub_.publish(cmd_msg)
+      else:
+        for i in range(motor_count):
+          cmd_msg.chain_cmds[i].motor_mode = 1
+          cmd_msg.chain_cmds[i].motor_cmd = 0.0
+          for j in range(joint_counts[i]):
+            cmd_msg.chain_cmds[i].enable_brake[j] = False      
+        self.cmd_pub_.publish(cmd_msg)
+        return
 
 if __name__ == '__main__':
   rospy.init_node('bata_path_controller')
