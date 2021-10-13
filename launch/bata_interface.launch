@@ -1,16 +1,11 @@
 <?xml version="1.0"?>
 <launch>
 
-  <arg name="motor_count" default="1" />
-  <arg name="joint_counts" default="[10]" />
+  <arg name="motor_count" default="2" />
+  <arg name="joint_counts" default="[3,3]" />
 
   <param name="motor_count" value="$(arg motor_count)" />
   <rosparam param="joint_counts"  subst_value="True">$(arg joint_counts)</rosparam>
-  <param name="robot_description" command="$(find xacro)/xacro --inorder
-                       '$(find bata_description)/robots/bata.urdf.xacro'
-                        joint_counts:=$(arg joint_counts)"/>
-
-  <node pkg="robot_state_publisher" type="robot_state_publisher" name="state_publisher"/>
 
   <node pkg="bata_base" type="bata_interface.py" name="bata_interface" output="screen"/>
 

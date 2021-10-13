@@ -226,10 +226,10 @@ def main():
 
           cur_idx += 1
       
-      if status_bad:
-        print('Status bad: '+str(sensor_msg))
-      else:
-        sensor_pub.publish(sensor_msg)
+      #if status_bad:
+      #  print('Status bad: '+str(sensor_msg))
+      #else:
+      #  sensor_pub.publish(sensor_msg)
     elif(rospy.Time.now() - sensor_msg.header.stamp > rospy.Duration.from_sec(0.1)):
       print 'Reseting connection to motor board'
       ser.close()
