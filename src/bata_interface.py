@@ -6,7 +6,8 @@ import struct
 import math
 import sys
 from sensor_msgs.msg import JointState
-from bata_base.msg import BataCmd
+from std_msgs.msg import UInt16MultiArray
+from bata_base.msg import BataCmd, OpticalSensors
 
 SERIAL_BAUD = 1000000
 UPDATE_CMD = 0
@@ -18,6 +19,7 @@ cur_cmd = None
 motor_count = 0
 motor_modes = []
 joint_counts = []
+optical_counts = []
 
 def pos_val_to_rad(val):
   return (val-((4096-0)/2.0))*(2*math.pi/4096)
@@ -54,7 +56,7 @@ def cmd_cb(msg):
   cur_cmd = msg
 
 def init_motor_board(ser):
-  global motor_count, motor_modes, joint_counts
+  global motor_count, motor_modes, joint_counts, optical_counts
 
   # Turn off sensor data
   ser.write(struct.pack("B", SENSOR_CMD))
@@ -68,18 +70,20 @@ def init_motor_board(ser):
   motor_count = 0
   motor_modes = []
   joint_counts = []
+  optical_counts = []
 
   while ser.in_waiting < 1:
     pass
   motor_count = struct.unpack("B", ser.read())[0]
 
-  while ser.in_waiting < 2*motor_count:
+  while ser.in_waiting < 3*motor_count:
     pass
 
   for i in range(motor_count):
     motor_modes.append(struct.unpack("B", ser.read())[0])
     joint_counts.append(struct.unpack("B", ser.read())[0])
-  
+    optical_counts.append(struct.unpack("B", ser.read())[0])
+
   # Turn on sensor data
   ser.write(struct.pack("B", SENSOR_CMD))
   ser.write(struct.pack("B", 1))
@@ -92,19 +96,23 @@ def main():
   ser = serial.Serial(port='/dev/ttyACM0', 
                       baudrate=SERIAL_BAUD)
 
-
+  print 'Started interface'
   init_motor_board(ser)
 
   print('Motor count: %d'%motor_count)
   print('Motor modes: ' + str(motor_modes))
   print('Joint counts: '+str(joint_counts))
-  
+  print('Optical counts: '+str(optical_counts))  
+
   # Check that the param server agrees with above values
   if not rospy.has_param('motor_count'):
     print('motor_count parameter not set')
     return
   if not rospy.has_param('joint_counts'):
     print('joint_counts parameter not set')
+    return
+  if not rospy.has_param('optical_counts'):
+    print('optical_counts parameter not set')
     return
   if rospy.get_param('motor_count') != motor_count:
     print('motor_count conflict (HW expects %d, received %d)'
@@ -117,40 +125,52 @@ def main():
             %(i, joint_counts[i], joint_count))
       return
     
+  for i, optical_count in enumerate(rospy.get_param('optical_counts')):
+    if optical_count != optical_counts[i]:
+      print('optical_counts[%d] conflict (HW expects %d, received %d)'
+            %(i, optical_counts[i], optical_count))
+      return 
 
   sensor_update_bytes = 4
   cmd_update_bytes = 2*motor_count
   for i in range(motor_count):
-    sensor_update_bytes += 6+3*joint_counts[i]
+    sensor_update_bytes += 6+3*joint_counts[i] + 1 * optical_counts[i]
     cmd_update_bytes += (joint_counts[i]+7)//8
 
   joint_home_vals = []  
-  sensor_msg = JointState()
+  encoder_msg = JointState()
   for i in range(motor_count):
-    sensor_msg.name.append('m'+str(i))
-    sensor_msg.position.append(0)
-    sensor_msg.velocity.append(0)
-    sensor_msg.effort.append(0)
+    encoder_msg.name.append('m'+str(i))
+    encoder_msg.position.append(0)
+    encoder_msg.velocity.append(0)
+    encoder_msg.effort.append(0)
     joint_home_vals.append([])
     for j in range(joint_counts[i]):
-      sensor_msg.name.append('m'+str(i)+'_j'+str(j))
-      sensor_msg.position.append(0)
-      sensor_msg.velocity.append(0)
-      sensor_msg.effort.append(0)
+      encoder_msg.name.append('m'+str(i)+'_j'+str(j))
+      encoder_msg.position.append(0)
+      encoder_msg.velocity.append(0)
+      encoder_msg.effort.append(0)
 
-      home_val_name = sensor_msg.name[-1]+"_home_val"
+      home_val_name = encoder_msg.name[-1]+"_home_val"
       if not rospy.has_param(home_val_name):
         joint_home_vals[i].append(0.0)
         print 'Did not find param '+home_val_name+', setting to 0.0'
       else:
         joint_home_vals[i].append(rospy.get_param(home_val_name))
 
+  optical_msg = OpticalSensors()
+  for i in range(motor_count):
+    optical_msg.sensors.append(UInt16MultiArray())
+    for j in range(optical_counts[i]):
+      optical_msg.sensors[i].data.append(0)
+
   sensor_pub = rospy.Publisher('joint_states', JointState, queue_size=1)
+  optical_pub = rospy.Publisher('optical_sensors', OpticalSensors, queue_size=1)
   traj_sub = rospy.Subscriber("cmd_trajectory", BataCmd, cmd_cb)
 
   start_stamp = None
   prev_hw_stamp = None
-  sensor_msg.header.stamp = rospy.Time.now()
+  encoder_msg.header.stamp = rospy.Time.now()
   while not rospy.is_shutdown():
 
     if cur_cmd is not None:
@@ -201,36 +221,48 @@ def main():
       #if (prev_hw_stamp is None) or (prev_hw_stamp > time_stamp):
       #  start_stamp = rospy.Time.now() - 2*time_stamp
       #
-      #sensor_msg.header.stamp = start_stamp + time_stamp
+      #encoder_msg.header.stamp = start_stamp + time_stamp
       #prev_hw_stamp = time_stamp
-      sensor_msg.header.stamp = rospy.Time.now()
+      prev_stamp = encoder_msg.header.stamp.to_sec()
+      encoder_msg.header.stamp = rospy.Time.now()
+      optical_msg.header.stamp = encoder_msg.header.stamp
+      now_stamp = encoder_msg.header.stamp.to_sec()
       status_bad = False
 
-      cur_idx = 0
+      joint_idx = 0
       for i in range(motor_count):
-        sensor_msg.position[cur_idx] = pos_val_to_rad(struct.unpack(">h",ser.read(2))[0])
-        sensor_msg.velocity[cur_idx] = vel_val_to_rad_sec(struct.unpack(">h",ser.read(2))[0])
-        sensor_msg.effort[cur_idx] = cur_val_to_ma(struct.unpack(">h", ser.read(2))[0])
-        cur_idx += 1
+        encoder_msg.position[joint_idx] = pos_val_to_rad(struct.unpack(">h",ser.read(2))[0])
+        encoder_msg.velocity[joint_idx] = vel_val_to_rad_sec(struct.unpack(">h",ser.read(2))[0])
+        encoder_msg.effort[joint_idx] = cur_val_to_ma(struct.unpack(">h", ser.read(2))[0])
+        joint_idx += 1
         for j in range(joint_counts[i]):
-          sensor_msg.position[cur_idx] = (2*math.pi/((1<<16)))*struct.unpack(">h", ser.read(2))[0]
-          sensor_msg.position[cur_idx] -= joint_home_vals[i][j]
-          if sensor_msg.position[cur_idx] > math.pi:
-            sensor_msg.position[cur_idx] -= 2*math.pi
-          elif sensor_msg.position[cur_idx] < -math.pi:
-            sensor_msg.position[cur_idx] += 2*math.pi
 
-          sensor_msg.effort[cur_idx] = struct.unpack("B", ser.read(1))[0]
-          if sensor_msg.effort[cur_idx] != 0x04:
+          encoder_val = (2*math.pi/((1<<16)))*struct.unpack(">h", ser.read(2))[0]
+          encoder_val -= joint_home_vals[i][j]
+          if encoder_val > math.pi:
+            encoder_val -= 2*math.pi
+          elif encoder_val < -math.pi:
+            encoder_val += 2*math.pi
+
+          encoder_msg.velocity[joint_idx] = (encoder_val - encoder_msg.position[joint_idx])/(now_stamp-prev_stamp)
+          encoder_msg.position[joint_idx] = encoder_val
+          encoder_msg.effort[joint_idx] = struct.unpack("B", ser.read(1))[0]
+          
+          if encoder_msg.effort[joint_idx] != 0x04:
             status_bad = True
 
-          cur_idx += 1
+          joint_idx += 1
+
+        for j in range(optical_counts[i]):
+          optical_msg.sensors[i].data[j] = struct.unpack("B", ser.read(1))[0]
       
-      #if status_bad:
-      #  print('Status bad: '+str(sensor_msg))
-      #else:
-      #  sensor_pub.publish(sensor_msg)
-    elif(rospy.Time.now() - sensor_msg.header.stamp > rospy.Duration.from_sec(0.1)):
+      if status_bad:
+        print('Status bad: '+str(encoder_msg))
+      else:
+        sensor_pub.publish(encoder_msg)
+      optical_pub.publish(optical_msg)      
+
+    elif(rospy.Time.now() - encoder_msg.header.stamp > rospy.Duration.from_sec(10)):
       print 'Reseting connection to motor board'
       ser.close()
       rospy.sleep(0.1)
@@ -238,7 +270,7 @@ def main():
                           baudrate=SERIAL_BAUD)
       init_motor_board(ser)
       print 'Reset complete'
-      sensor_msg.header.stamp = rospy.Time.now()
+      encoder_msg.header.stamp = rospy.Time.now()
 
   ser.close()
   

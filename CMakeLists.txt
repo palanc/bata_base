@@ -54,6 +54,7 @@ add_message_files(
    FILES
    BataChainCmd.msg
    BataCmd.msg
+   OpticalSensors.msg
 )
 
 ## Generate services in the 'srv' folder
