@@ -4,11 +4,13 @@
   <arg name="motor_count" default="2" />
   <arg name="joint_counts" default="[3,3]" />
   <arg name="optical_counts" default="[4,4]" />
+  <arg name="hand_joint_names_config" default="$(find bata_base)/config/hand_joint_names.yaml" />  
   <arg name="hand_home_vals_config" default="$(find bata_base)/config/hand_home_vals.yaml" />
 
   <param name="motor_count" value="$(arg motor_count)" />
   <rosparam param="joint_counts"  subst_value="True">$(arg joint_counts)</rosparam>
   <rosparam param="optical_counts"  subst_value="True">$(arg optical_counts)</rosparam>
+  <rosparam file="$(arg hand_joint_names_config)" command="load" />  
   <rosparam file="$(arg hand_home_vals_config)" command="load" />
 
   <node pkg="bata_base" type="bata_interface.py" name="bata_interface" output="screen"/>

@@ -96,7 +96,7 @@ def main():
   ser = serial.Serial(port='/dev/ttyACM0', 
                       baudrate=SERIAL_BAUD)
 
-  print 'Started interface'
+  print( 'Started interface')
   init_motor_board(ser)
 
   print('Motor count: %d'%motor_count)
@@ -139,14 +139,24 @@ def main():
 
   joint_home_vals = []  
   encoder_msg = JointState()
-  for i in range(motor_count):
-    encoder_msg.name.append('m'+str(i))
+  for i in range(motor_count):   
+    joint_name = 'm'+str(i)+'_name'
+    if not rospy.has_param(joint_name):
+      encoder_msg.name.append('m'+str(i))
+    else:
+      encoder_msg.name.append(rospy.get_param(joint_name))    
+    
     encoder_msg.position.append(0)
     encoder_msg.velocity.append(0)
     encoder_msg.effort.append(0)
     joint_home_vals.append([])
     for j in range(joint_counts[i]):
-      encoder_msg.name.append('m'+str(i)+'_j'+str(j))
+      joint_name = 'm'+str(i)+'_j'+str(j)+'_name'
+      if not rospy.has_param(joint_name):
+        encoder_msg.name.append('m'+str(i)+'_j'+str(j))
+      else:
+        encoder_msg.name.append(rospy.get_param(joint_name))    
+    
       encoder_msg.position.append(0)
       encoder_msg.velocity.append(0)
       encoder_msg.effort.append(0)
@@ -154,7 +164,7 @@ def main():
       home_val_name = encoder_msg.name[-1]+"_home_val"
       if not rospy.has_param(home_val_name):
         joint_home_vals[i].append(0.0)
-        print 'Did not find param '+home_val_name+', setting to 0.0'
+        print ('Did not find param '+home_val_name+', setting to 0.0')
       else:
         joint_home_vals[i].append(rospy.get_param(home_val_name))
 
@@ -200,7 +210,7 @@ def main():
           cmd_update[cmd_idx] = (pos_val >> 8)  & 0x00FF
           cmd_update[cmd_idx + 1] = pos_val & 0x00FF 
         else:
-          print 'Invalid motor mode'
+          print( 'Invalid motor mode')
         cmd_idx += 1
         for j in range(joint_counts[i]):
           if(j%8==0):
@@ -211,7 +221,7 @@ def main():
 
       ser.write(struct.pack('B', UPDATE_CMD))
       ser.write(struct.pack('B'*len(cmd_update), *cmd_update))
-      print('Sent '+str(cmd_update))
+      #print('Sent '+str(cmd_update))
       cur_cmd = None
 
     if ser.in_waiting >= sensor_update_bytes:
@@ -263,13 +273,13 @@ def main():
       optical_pub.publish(optical_msg)      
 
     elif(rospy.Time.now() - encoder_msg.header.stamp > rospy.Duration.from_sec(10)):
-      print 'Reseting connection to motor board'
+      print ('Reseting connection to motor board')
       ser.close()
       rospy.sleep(0.1)
       ser = serial.Serial(port='/dev/ttyACM0', 
                           baudrate=SERIAL_BAUD)
       init_motor_board(ser)
-      print 'Reset complete'
+      print ('Reset complete')
       encoder_msg.header.stamp = rospy.Time.now()
 
   ser.close()

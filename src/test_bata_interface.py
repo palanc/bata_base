@@ -32,15 +32,15 @@ if __name__ == '__main__':
     cmd = getch()
 
     if cmd == 'm':
-      resp = raw_input('Enter the motor to control: [0-%d]'%(motor_count-1))
+      resp = input('Enter the motor to control: [0-%d]'%(motor_count-1))
       motor_idx = int(resp)
       brake_idx = 0
-      print 'Controlling motor %d'%motor_idx
+      print ('Controlling motor %d'%motor_idx)
     elif cmd == 'b':
-      resp = raw_input('Enter the brake to control: [0-%d]'%(joint_counts[motor_idx]-1))
+      resp = input('Enter the brake to control: [0-%d]'%(joint_counts[motor_idx]-1))
       brake_idx = int(resp)
       sp = 0.0
-      print 'Controlling brake %d of motor %d'%(brake_idx, motor_idx)
+      print( 'Controlling brake %d of motor %d'%(brake_idx, motor_idx))
     elif cmd == 'p':
       joint_msg = rospy.wait_for_message('joint_states', JointState)
       cmd_msg.chain_cmds[motor_idx].motor_mode = 3
@@ -50,7 +50,7 @@ if __name__ == '__main__':
           break
       cmd_pub.publish(cmd_msg)
 
-      print 'Motor %d set to joint mode'%motor_idx
+      print( 'Motor %d set to joint mode'%motor_idx)
 
     elif cmd == 'v':
 
@@ -58,41 +58,41 @@ if __name__ == '__main__':
       cmd_msg.chain_cmds[motor_idx].motor_cmd = 0.0
       cmd_pub.publish(cmd_msg)
 
-      print 'Motor %d set to velocity mode'%motor_idx
+      print ('Motor %d set to velocity mode'%motor_idx)
     elif cmd == 'c':
 
       cmd_msg.chain_cmds[motor_idx].motor_mode = 0
       cmd_msg.chain_cmds[motor_idx].motor_cmd = 0.0
       cmd_pub.publish(cmd_msg)
 
-      print 'Motor %d set to current mode'%motor_idx
+      print( 'Motor %d set to current mode'%motor_idx)
     elif cmd == '+':
-      print 'About to turn on brake %d of motor %d'%(brake_idx, motor_idx)
-      raw_input('Press enter to continue')
+      print( 'About to turn on brake %d of motor %d'%(brake_idx, motor_idx))
+      input('Press enter to continue')
 
       cmd_msg.chain_cmds[motor_idx].enable_brake[brake_idx] = True
       cmd_pub.publish(cmd_msg)
 
-      print 'Turned on brake %d of motor %d'%(brake_idx, motor_idx)
+      print ('Turned on brake %d of motor %d'%(brake_idx, motor_idx))
     
     elif cmd == '-':
 
       cmd_msg.chain_cmds[motor_idx].enable_brake[brake_idx] = False
       cmd_pub.publish(cmd_msg)
 
-      print 'Turned off brake %d of motor %d'%(brake_idx, motor_idx)
+      print ('Turned off brake %d of motor %d'%(brake_idx, motor_idx))
 
     elif cmd == 'O':
-      print 'About to turn on all of motor %d brakes'%(motor_idx)
-      raw_input('Press enter to continue')
+      print ('About to turn on all of motor %d brakes'%(motor_idx))
+      input('Press enter to continue')
 
       for i in range(joint_counts[motor_idx]):
         cmd_msg.chain_cmds[motor_idx].enable_brake[i] = True
       cmd_pub.publish(cmd_msg)        
 
     elif cmd == 'A':
-      print 'About to turn off all of motor %d brakes'%(motor_idx)
-      raw_input('Press enter to continue')
+      print ('About to turn off all of motor %d brakes'%(motor_idx))
+      input('Press enter to continue')
 
       for i in range(joint_counts[motor_idx]):
         cmd_msg.chain_cmds[motor_idx].enable_brake[i] = False
@@ -112,7 +112,7 @@ if __name__ == '__main__':
         cmd_msg.chain_cmds[motor_idx].motor_cmd += POSITION_DEL
         mode_str = 'position'
       cmd_pub.publish(cmd_msg)
-      print 'Increased motor %d '%motor_idx + mode_str + ' to %f'%cmd_msg.chain_cmds[motor_idx].motor_cmd
+      print ('Increased motor %d '%motor_idx + mode_str + ' to %f'%cmd_msg.chain_cmds[motor_idx].motor_cmd)
   
     elif cmd == 's':
       mode_str = ''
@@ -127,7 +127,7 @@ if __name__ == '__main__':
         cmd_msg.chain_cmds[motor_idx].motor_cmd -= POSITION_DEL
         mode_str = 'position'
       cmd_pub.publish(cmd_msg)
-      print 'Decreased motor %d '%motor_idx + mode_str + ' to %f'%cmd_msg.chain_cmds[motor_idx].motor_cmd
+      print ('Decreased motor %d '%motor_idx + mode_str + ' to %f'%cmd_msg.chain_cmds[motor_idx].motor_cmd)
 
     elif cmd == 'u':
       mode_str = ''
@@ -138,16 +138,16 @@ if __name__ == '__main__':
       elif cmd_msg.chain_cmds[motor_idx].motor_mode == 3:
         mode_str = 'position'
 
-      resp = raw_input('Enter new ' + mode_str + ' set point:')
+      resp = input('Enter new ' + mode_str + ' set point:')
       cmd_msg.chain_cmds[motor_idx].motor_cmd = float(resp) 
       cmd_pub.publish(cmd_msg)
 
-      print 'Set motor %d '%motor_idx + mode_str + ' to %f'%cmd_msg.chain_cmds[motor_idx].motor_cmd
+      print ('Set motor %d '%motor_idx + mode_str + ' to %f'%cmd_msg.chain_cmds[motor_idx].motor_cmd)
 
     elif cmd == 'q':
       break
     else:
-      print 'Unrecognized cmd' 
+      print( 'Unrecognized cmd' )
 
   '''
   mode_pub.publish(mode_msg)
