@@ -17,14 +17,17 @@ if __name__ == '__main__':
   joint_counts = rospy.get_param('joint_counts')
 
   getch = _Getch()
-  
+
+  # Initialize in velocity mode, 0.0 speed, all brakes off  
   cmd_msg = BataCmd()
   for i in range(motor_count):
     chain_cmd_msg = BataChainCmd()
     chain_cmd_msg.enable_brake = [False]*joint_counts[i]
+    chain_cmd_msg.motor_mode = 1
     cmd_msg.chain_cmds.append(chain_cmd_msg)
 
   cmd_pub = rospy.Publisher('cmd_trajectory', BataCmd, queue_size=1)
+  cmd_pub.publish(cmd_msg)
 
   motor_idx = 0
   brake_idx = 0  

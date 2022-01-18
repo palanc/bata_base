@@ -14,6 +14,7 @@ UPDATE_CMD = 0
 INFO_CMD = 1
 SENSOR_CMD = 2
 MODE_CMD = 3
+ENCODER_CONFIG_CMD = 5
 
 cur_cmd = None
 motor_count = 0
@@ -88,6 +89,26 @@ def init_motor_board(ser):
   ser.write(struct.pack("B", SENSOR_CMD))
   ser.write(struct.pack("B", 1))
 
+def configure_encoders(ser, joint_val_negate, joint_home_vals):
+  # Turn off sensor data
+  ser.write(struct.pack("B", SENSOR_CMD))
+  ser.write(struct.pack("B", 0))
+  rospy.sleep(0.1)
+  ser.reset_input_buffer()
+  
+  # Get motor/joint info
+  ser.write(struct.pack("B", ENCODER_CONFIG_CMD))  
+  
+  for i in range(motor_count):
+    for j in range(joint_counts[i]):
+      jh_conv_val = int((((1<<16)/(2*math.pi))*joint_home_vals[i][j])+0.5)
+      ser.write(struct.pack("B", joint_val_negate[i][j]))
+      ser.write(struct.pack("B", (jh_conv_val >> 8) & 0x0FF))
+      ser.write(struct.pack("B", jh_conv_val & 0x0FF))
+  
+  # Turn on sensor data
+  ser.write(struct.pack("B", SENSOR_CMD))
+  ser.write(struct.pack("B", 1))  
 
 def main():
   global cur_cmd, motor_modes
@@ -137,7 +158,8 @@ def main():
     sensor_update_bytes += 6+3*joint_counts[i] + 1 * optical_counts[i]
     cmd_update_bytes += (joint_counts[i]+7)//8
 
-  joint_home_vals = []  
+  joint_home_vals = []
+  joint_val_negate = []  
   encoder_msg = JointState()
   for i in range(motor_count):   
     joint_name = 'm'+str(i)+'_name'
@@ -150,12 +172,14 @@ def main():
     encoder_msg.velocity.append(0)
     encoder_msg.effort.append(0)
     joint_home_vals.append([])
+    joint_val_negate.append([])
+
     for j in range(joint_counts[i]):
-      joint_name = 'm'+str(i)+'_j'+str(j)+'_name'
-      if not rospy.has_param(joint_name):
-        encoder_msg.name.append('m'+str(i)+'_j'+str(j))
+      joint_name = 'm'+str(i)+'_j'+str(j)
+      if not rospy.has_param(joint_name+'_name'):
+        encoder_msg.name.append(joint_name)
       else:
-        encoder_msg.name.append(rospy.get_param(joint_name))    
+        encoder_msg.name.append(rospy.get_param(joint_name+'_name'))    
     
       encoder_msg.position.append(0)
       encoder_msg.velocity.append(0)
@@ -167,6 +191,14 @@ def main():
         print ('Did not find param '+home_val_name+', setting to 0.0')
       else:
         joint_home_vals[i].append(rospy.get_param(home_val_name))
+        
+      joint_negate_name = encoder_msg.name[-1]+'_val_negate'
+      if not rospy.has_param(joint_negate_name):
+        joint_val_negate[i].append(False)
+      else:
+        joint_val_negate[i].append(rospy.get_param(joint_negate_name))      
+
+  configure_encoders(ser, joint_val_negate, joint_home_vals)
 
   optical_msg = OpticalSensors()
   for i in range(motor_count):
@@ -237,8 +269,8 @@ def main():
       encoder_msg.header.stamp = rospy.Time.now()
       optical_msg.header.stamp = encoder_msg.header.stamp
       now_stamp = encoder_msg.header.stamp.to_sec()
-      status_bad = False
-
+      status_error = False
+      status_miscal = False
       joint_idx = 0
       for i in range(motor_count):
         encoder_msg.position[joint_idx] = pos_val_to_rad(struct.unpack(">h",ser.read(2))[0])
@@ -248,7 +280,7 @@ def main():
         for j in range(joint_counts[i]):
 
           encoder_val = (2*math.pi/((1<<16)))*struct.unpack(">h", ser.read(2))[0]
-          encoder_val -= joint_home_vals[i][j]
+          
           if encoder_val > math.pi:
             encoder_val -= 2*math.pi
           elif encoder_val < -math.pi:
@@ -259,16 +291,20 @@ def main():
           encoder_msg.effort[joint_idx] = struct.unpack("B", ser.read(1))[0]
           
           if encoder_msg.effort[joint_idx] != 0x04:
-            status_bad = True
+            if encoder_msg.effort[joint_idx] > 0x06 or encoder_msg.effort[joint_idx] < 0x05:
+              status_error = True
+            else:
+              status_miscal = True
 
           joint_idx += 1
 
         for j in range(optical_counts[i]):
           optical_msg.sensors[i].data[j] = struct.unpack("B", ser.read(1))[0]
       
-      if status_bad:
+      if status_error or status_miscal:
         print('Status bad: '+str(encoder_msg))
-      else:
+      
+      if not status_error:
         sensor_pub.publish(encoder_msg)
       optical_pub.publish(optical_msg)      
 

@@ -12,7 +12,8 @@ import sys
 
 JOINT_DELTA = 5*(math.pi/180.0)
 VELOCITY_CMD = 0.2
-JOINT_LIMIT = 62.0*(math.pi/180.0)
+UPPER_JOINT_LIMIT = 90.0*(math.pi/180.0)
+LOWER_JOINT_LIMIT = 0.0*(math.pi/180.0)
 
 class BataPathController:
 
@@ -38,9 +39,9 @@ class BataPathController:
                                             BataPathAction,
                                             execute_cb = self.execute_cb,
                                             auto_start = False)
-    print 'Starting server'
+    print( 'Starting server')
     self.as_.start()
-    print 'Server started'
+    print( 'Server started')
 
   def robot_state_cb(self, msg):
     # Only update if the current message isn't being examined right now
@@ -53,14 +54,20 @@ class BataPathController:
         msg_ok = False
       else:
         for i in range(self.motor_count_):
-          if(msg.name[state_idx] != 'm'+str(i)):
-            print('Expected joint %d to have name m%d'%(state_idx,i))
+          joint_name = 'm'+str(i)
+          if rospy.has_param(joint_name+'_name'):
+            joint_name = rospy.get_param(joint_name+'_name')
+          if(msg.name[state_idx] != joint_name):
+            print('Expected joint %d to have name %s'%(state_idx,joint_name))
             msg_ok = False
             break
           state_idx += 1
           for j in range(self.joint_counts_[i]):
-            if(msg.name[state_idx] != 'm'+str(i)+'_j'+str(j)):
-              print('Expected joint %d to have name m%d_j%d'%(state_idx,i,j))
+            joint_name = 'm'+str(i)+'_j'+str(j)
+            if rospy.has_param(joint_name+'_name'):
+              joint_name = rospy.get_param(joint_name+'_name')            
+            if(msg.name[state_idx] != joint_name):
+              print('Expected joint %d to have name %s'%(state_idx,joint_name))
               msg_ok = False
               break
             state_idx += 1
@@ -94,9 +101,13 @@ class BataPathController:
       robot_setpoints.append([None]*self.joint_counts_[i]) 
       robot_joint_names.append([])
       for j in range(self.joint_counts_[i]):
-        robot_joint_names[i].append('m'+str(i)+'_j'+str(j))      
-
+        joint_name = 'm'+str(i)+'_j'+str(j)
+        if rospy.has_param(joint_name+'_name'):
+          joint_name = rospy.get_param(joint_name+'_name')
+        robot_joint_names[i].append(joint_name)      
+    
     goal_idx = -1
+    print(goal)
     while True:
       
       # Check for pre-empt
@@ -130,9 +141,9 @@ class BataPathController:
                and robot_state[i][j] < robot_setpoints[i][j]))):
             robot_setpoints[i][j] = None
             cmd_msg.chain_cmds[i].enable_brake[j] = True
-      print 'Goal idx: ' + str(goal_idx)
-      print 'Goals: '+str(robot_setpoints)
-      print 'State: '+str(robot_state)
+      #print( 'Goal idx: ' + str(goal_idx))
+      #print( 'Goals: '+str(robot_setpoints))
+      #print( 'State: '+str(robot_state))
 
       while True:
         # Check if ready for next goal
@@ -164,7 +175,8 @@ class BataPathController:
           else:
             # Check if next goal is valid
             for i in range(len(goal.path.points[goal_idx].positions)):
-              if (abs(goal.path.points[goal_idx].positions[i]) > JOINT_LIMIT):
+              if (goal.path.points[goal_idx].positions[i] > UPPER_JOINT_LIMIT or
+                  goal.path.points[goal_idx].positions[i] < LOWER_JOINT_LIMIT):
                 print('Out of bounds goal: %f'%(goal.path.points[goal_idx].positions[i]))
                 as_result.waypoint_success = as_feedback.waypoint_success
                 self.as_.set_succeeded(as_result)
@@ -213,8 +225,15 @@ class BataPathController:
       
       # Determine motor directions and brakes
       for i in range(self.motor_count_):
-        if abs(cmd_msg.chain_cmds[i].motor_cmd) < sys.float_info.epsilon:
-          assert(pos_votes > 0 or neg_votes > 0) # At least one joint should be unbreaked, have a goal
+        has_goal = False
+        for j in range(self.joint_counts_[i]):
+          if robot_setpoints[i][j] is not None:
+            has_goal = True
+            break
+        if not has_goal:
+          pass
+        elif abs(cmd_msg.chain_cmds[i].motor_cmd) < sys.float_info.epsilon:
+          assert(pos_votes[i] > 0 or neg_votes[i] > 0) # At least one joint should be unbreaked
           if pos_votes[i] > neg_votes[i]:
             cmd_msg.chain_cmds[i].motor_cmd = VELOCITY_CMD
           else:
@@ -239,6 +258,8 @@ class BataPathController:
             
       if goal_idx >= 0 and goal_idx < len(goal.path.points):
         # Send the updated command
+        if (not cmd_msg.chain_cmds[0].enable_brake[0]) and abs(cmd_msg.chain_cmds[0].motor_cmd) > sys.float_info.epsilon:
+          print(cmd_msg)
         self.cmd_pub_.publish(cmd_msg)
       else:
         for i in range(motor_count):
