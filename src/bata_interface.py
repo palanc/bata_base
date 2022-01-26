@@ -8,13 +8,14 @@ import sys
 from sensor_msgs.msg import JointState
 from std_msgs.msg import UInt16MultiArray
 from bata_base.msg import BataCmd, OpticalSensors
+from visualization_msgs.msg import Marker, MarkerArray
 
 SERIAL_BAUD = 1000000
-UPDATE_CMD = 0
-INFO_CMD = 1
-SENSOR_CMD = 2
-MODE_CMD = 3
-ENCODER_CONFIG_CMD = 5
+UPDATE_CMD = 1
+INFO_CMD = 2
+SENSOR_CMD = 3
+MODE_CMD = 4
+ENCODER_CONFIG_CMD = 6
 
 cur_cmd = None
 motor_count = 0
@@ -201,13 +202,50 @@ def main():
   configure_encoders(ser, joint_val_negate, joint_home_vals)
 
   optical_msg = OpticalSensors()
+  optical_points_msg = MarkerArray()
+  optical_offsets = []
+  marker_id = 0
   for i in range(motor_count):
     optical_msg.sensors.append(UInt16MultiArray())
+    prefix = "l_" if i == 0 else "r_"
+    optical_offsets.append([])
     for j in range(optical_counts[i]):
       optical_msg.sensors[i].data.append(0)
+      
+      optical_marker = Marker()
+      optical_marker.header.frame_id = prefix + 'finger_sensor' + str(j)  
+      optical_marker.header.stamp = rospy.Time(0)
+      optical_marker.ns = 'optical_points'
+      optical_marker.id = marker_id
+      optical_marker.type = Marker.SPHERE
+      optical_marker.action = Marker.ADD
+      optical_marker.pose.position.x = 0.0
+      optical_marker.pose.position.y = 0.0
+      optical_marker.pose.position.z = 0.0
+      optical_marker.pose.orientation.x = 0.0
+      optical_marker.pose.orientation.y = 0.0
+      optical_marker.pose.orientation.z = 0.0
+      optical_marker.pose.orientation.w = 1.0
+      optical_marker.scale.x = 0.01
+      optical_marker.scale.y = 0.01
+      optical_marker.scale.z = 0.01
+      optical_marker.color.a = 1.0
+      optical_marker.color.r = 1.0
+      optical_marker.color.g = 0.0
+      optical_marker.color.b = 0.0
+      optical_points_msg.markers.append(optical_marker)
+      marker_id += 1
+      
+      offset_name = prefix+"finger_sensor"+str(j)+"_offset"
+      if not rospy.has_param(offset_name):
+        optical_offsets[i].append(0)
+      else:
+        optical_offsets[i].append(rospy.get_param(offset_name))
+      
 
   sensor_pub = rospy.Publisher('joint_states', JointState, queue_size=1)
   optical_pub = rospy.Publisher('optical_sensors', OpticalSensors, queue_size=1)
+  viz_pub = rospy.Publisher('optical_points', MarkerArray, queue_size=1)
   traj_sub = rospy.Subscriber("cmd_trajectory", BataCmd, cmd_cb)
 
   start_stamp = None
@@ -252,7 +290,9 @@ def main():
         cmd_idx += 1
 
       ser.write(struct.pack('B', UPDATE_CMD))
-      ser.write(struct.pack('B'*len(cmd_update), *cmd_update))
+      #ser.write(struct.pack('B'*len(cmd_update), *cmd_update))
+      for i in range(len(cmd_update)):
+        ser.write(struct.pack('B', cmd_update[i]))
       #print('Sent '+str(cmd_update))
       cur_cmd = None
 
@@ -272,6 +312,7 @@ def main():
       status_error = False
       status_miscal = False
       joint_idx = 0
+      optical_idx = 0
       for i in range(motor_count):
         encoder_msg.position[joint_idx] = pos_val_to_rad(struct.unpack(">h",ser.read(2))[0])
         encoder_msg.velocity[joint_idx] = vel_val_to_rad_sec(struct.unpack(">h",ser.read(2))[0])
@@ -300,13 +341,19 @@ def main():
 
         for j in range(optical_counts[i]):
           optical_msg.sensors[i].data[j] = struct.unpack("B", ser.read(1))[0]
-      
+          if optical_msg.sensors[i].data[j] < 255:
+            optical_msg.sensors[i].data[j] += optical_offsets[i][j]
+            optical_points_msg.markers[optical_idx].pose.position.x = optical_msg.sensors[i].data[j]/1000.0
+          else:
+            optical_points_msg.markers[optical_idx].pose.position.x = 0.0
+          optical_idx += 1
       if status_error or status_miscal:
         print('Status bad: '+str(encoder_msg))
       
       if not status_error:
         sensor_pub.publish(encoder_msg)
-      optical_pub.publish(optical_msg)      
+      optical_pub.publish(optical_msg) 
+      viz_pub.publish(optical_points_msg)     
 
     elif(rospy.Time.now() - encoder_msg.header.stamp > rospy.Duration.from_sec(10)):
       print ('Reseting connection to motor board')
