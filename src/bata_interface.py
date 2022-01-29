@@ -8,6 +8,7 @@ import sys
 from sensor_msgs.msg import JointState
 from std_msgs.msg import UInt16MultiArray
 from bata_base.msg import BataCmd, OpticalSensors
+from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker, MarkerArray
 
 SERIAL_BAUD = 1000000
@@ -211,13 +212,13 @@ def main():
     optical_offsets.append([])
     for j in range(optical_counts[i]):
       optical_msg.sensors[i].data.append(0)
-      
+
       optical_marker = Marker()
       optical_marker.header.frame_id = prefix + 'finger_sensor' + str(j)  
       optical_marker.header.stamp = rospy.Time(0)
       optical_marker.ns = 'optical_points'
       optical_marker.id = marker_id
-      optical_marker.type = Marker.SPHERE
+      optical_marker.type = Marker.LINE_STRIP
       optical_marker.action = Marker.ADD
       optical_marker.pose.position.x = 0.0
       optical_marker.pose.position.y = 0.0
@@ -226,13 +227,15 @@ def main():
       optical_marker.pose.orientation.y = 0.0
       optical_marker.pose.orientation.z = 0.0
       optical_marker.pose.orientation.w = 1.0
-      optical_marker.scale.x = 0.01
-      optical_marker.scale.y = 0.01
-      optical_marker.scale.z = 0.01
+      optical_marker.scale.x = 0.003
+      optical_marker.scale.y = 0.003
+      optical_marker.scale.z = 0.003
       optical_marker.color.a = 1.0
       optical_marker.color.r = 1.0
       optical_marker.color.g = 0.0
       optical_marker.color.b = 0.0
+      optical_marker.points.append(Point())
+      optical_marker.points.append(Point())      
       optical_points_msg.markers.append(optical_marker)
       marker_id += 1
       
@@ -340,12 +343,15 @@ def main():
           joint_idx += 1
 
         for j in range(optical_counts[i]):
-          optical_msg.sensors[i].data[j] = struct.unpack("B", ser.read(1))[0]
+          sensor_val = struct.unpack("B", ser.read(1))[0]
+          #if sensor_val < 0 or sensor_val > 255:
+          #  print(sensor_val)
+          optical_msg.sensors[i].data[j] = sensor_val
           if optical_msg.sensors[i].data[j] < 255:
             optical_msg.sensors[i].data[j] += optical_offsets[i][j]
-            optical_points_msg.markers[optical_idx].pose.position.x = optical_msg.sensors[i].data[j]/1000.0
+            optical_points_msg.markers[optical_idx].points[1].x = optical_msg.sensors[i].data[j]/1000.0
           else:
-            optical_points_msg.markers[optical_idx].pose.position.x = 0.0
+            optical_points_msg.markers[optical_idx].points[1].x = 0.0
           optical_idx += 1
       if status_error or status_miscal:
         print('Status bad: '+str(encoder_msg))
