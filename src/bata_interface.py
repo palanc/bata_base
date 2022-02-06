@@ -76,11 +76,13 @@ def init_motor_board(ser):
   optical_counts = []
 
   while ser.in_waiting < 1:
-    pass
+    print('[bata_interface] Waiting for motor_count')
+    rospy.sleep(0.1)
   motor_count = struct.unpack("B", ser.read())[0]
 
   while ser.in_waiting < 3*motor_count:
-    pass
+    print('[bata_interface] Waiting for joint_counts')
+    rospy.sleep(0.1)
 
   for i in range(motor_count):
     motor_modes.append(struct.unpack("B", ser.read())[0])
@@ -314,6 +316,7 @@ def main():
       now_stamp = encoder_msg.header.stamp.to_sec()
       status_error = False
       status_miscal = False
+      optical_error = False
       joint_idx = 0
       optical_idx = 0
       for i in range(motor_count):
@@ -353,21 +356,30 @@ def main():
           else:
             optical_points_msg.markers[optical_idx].points[1].x = 0.0
           optical_idx += 1
+          if optical_msg.sensors[i].data[j] < 0 or optical_msg.sensors[i].data[j] > 255:
+            optical_error = True
       if status_error or status_miscal:
         print('Status bad: '+str(encoder_msg))
       
       if not status_error:
         sensor_pub.publish(encoder_msg)
-      optical_pub.publish(optical_msg) 
+      if not optical_error:
+        optical_pub.publish(optical_msg) 
       viz_pub.publish(optical_points_msg)     
 
-    elif(rospy.Time.now() - encoder_msg.header.stamp > rospy.Duration.from_sec(10)):
+    elif(rospy.Time.now() - encoder_msg.header.stamp > rospy.Duration.from_sec(0.25)):
       print ('Reseting connection to motor board')
+      #ser.reset_input_buffer()
+      #ser.reset_output_buffer()
       ser.close()
       rospy.sleep(0.1)
-      ser = serial.Serial(port='/dev/ttyACM0', 
-                          baudrate=SERIAL_BAUD)
-      init_motor_board(ser)
+      
+      return
+      #ser = serial.Serial(port='/dev/ttyACM0', 
+      #                    baudrate=SERIAL_BAUD)
+      #init_motor_board(ser)
+      #ser.reset_input_buffer()
+      #ser.reset_output_buffer()      
       print ('Reset complete')
       encoder_msg.header.stamp = rospy.Time.now()
 
