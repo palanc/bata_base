@@ -1,0 +1,2 @@
+bool disable_brakes
+trajectory_msgs/JointTrajectory path

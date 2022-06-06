@@ -6,6 +6,7 @@ from bata_base.msg import BataPathFeedback, BataPathResult, BataPathAction
 from bata_base.msg import BataCmd, BataChainCmd
 from sensor_msgs.msg import JointState
 from threading import Lock
+from copy import deepcopy
 
 import math
 import sys
@@ -89,7 +90,7 @@ class BataPathController:
     # Setup action responses
     as_feedback = BataPathFeedback()
     as_result = BataPathResult()
-    for i in range(len(goal.path.points)):
+    for i in range(len(goal.traj.path.points)):
       as_feedback.waypoint_success.append(False)
 
     # Variables for keeping track of robot state and goals
@@ -114,7 +115,7 @@ class BataPathController:
       if self.as_.is_preempt_requested():
         print('Pre-empted, abort')
         self.as_.set_preempted()
-        goal_idx = len(goal.path.points) # Indicates done
+        goal_idx = len(goal.traj.path.points) # Indicates done
 
       # Get latest robot state
       while self.cur_robot_state_msg_ is None:
@@ -168,43 +169,43 @@ class BataPathController:
 
           goal_idx += 1
           # Check if completely done
-          if goal_idx >= len(goal.path.points):
+          if goal_idx >= len(goal.traj.path.points):
             as_result.waypoint_success = as_feedback.waypoint_success
             self.as_.set_succeeded(as_result)
             break
           else:
             # Check if next goal is valid
-            for i in range(len(goal.path.points[goal_idx].positions)):
-              if (goal.path.points[goal_idx].positions[i] > UPPER_JOINT_LIMIT or
-                  goal.path.points[goal_idx].positions[i] < LOWER_JOINT_LIMIT):
-                print('Out of bounds goal: %f'%(goal.path.points[goal_idx].positions[i]))
+            for i in range(len(goal.traj.path.points[goal_idx].positions)):
+              if (goal.traj.path.points[goal_idx].positions[i] > UPPER_JOINT_LIMIT or
+                  goal.traj.path.points[goal_idx].positions[i] < LOWER_JOINT_LIMIT):
+                print('Out of bounds goal: %f'%(goal.traj.path.points[goal_idx].positions[i]))
                 as_result.waypoint_success = as_feedback.waypoint_success
                 self.as_.set_succeeded(as_result)
-                goal_idx = len(goal.path.points) # Indicates done
+                goal_idx = len(goal.traj.path.points) # Indicates done
                 break
 
-            if(goal_idx >= len(goal.path.points)):
+            if(goal_idx >= len(goal.traj.path.points)):
               break
 
             goal_match = 0
             for i in range(self.motor_count_):
               for j in range(self.joint_counts_[i]):
                 # Figure out which joint goal corresponds to joint (i,j)
-                for k in range(len(goal.path.joint_names)):
-                  if (robot_joint_names[i][j] == goal.path.joint_names[k]):
-                    if(abs(robot_state[i][j] - goal.path.points[goal_idx].positions[k]) > JOINT_DELTA):
+                for k in range(len(goal.traj.path.joint_names)):
+                  if (robot_joint_names[i][j] == goal.traj.path.joint_names[k]):
+                    if(abs(robot_state[i][j] - goal.traj.path.points[goal_idx].positions[k]) > JOINT_DELTA):
                       # Register goal
-                      robot_setpoints[i][j] = goal.path.points[goal_idx].positions[k]
+                      robot_setpoints[i][j] = goal.traj.path.points[goal_idx].positions[k]
                     else:
                       # Joint is already close enough so turn on brake, don't register goal
                       cmd_msg.chain_cmds[i].enable_brake[j] = True
                     goal_match += 1
             # Validate that all joint goals correspond to actual joints
-            if goal_match != len(goal.path.joint_names):
+            if goal_match != len(goal.traj.path.joint_names):
               print('Not all goal joint names matched with existing joints, abort')
               as_result.waypoint_success = as_feedback.waypoint_success
               self.as_.set_succeeded(as_result)
-              goal_idx = len(goal.path.points) # Indicates done
+              goal_idx = len(goal.traj.path.points) # Indicates done
               break
         else:
           # Found an unfinished goal
@@ -256,11 +257,19 @@ class BataPathController:
           # Continue going in the current direction (change nothing)
           pass
             
-      if goal_idx >= 0 and goal_idx < len(goal.path.points):
+      if goal_idx >= 0 and goal_idx < len(goal.traj.path.points):
         # Send the updated command
         if (not cmd_msg.chain_cmds[0].enable_brake[0]) and abs(cmd_msg.chain_cmds[0].motor_cmd) > sys.float_info.epsilon:
           print(cmd_msg)
-        self.cmd_pub_.publish(cmd_msg)
+          
+        if goal.traj.disable_brakes:
+          brakeless_msg = deepcopy(cmd_msg)
+          for i in range(motor_count):
+            for j in range(joint_counts[i]):
+              brakeless_msg.chain_cmds[i].enable_brake[j] = False
+          self.cmd_pub_.publish(brakeless_msg)
+        else:
+          self.cmd_pub_.publish(cmd_msg)
       else:
         for i in range(motor_count):
           cmd_msg.chain_cmds[i].motor_mode = 1

@@ -1,5 +1,5 @@
 # goal definition
-trajectory_msgs/JointTrajectory path
+bata_base/BataTraj traj
 ---
 # result definition
 bool[] waypoint_success
